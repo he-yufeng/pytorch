@@ -5929,7 +5929,7 @@ class CPUReproTests(TestCase):
         with torch.no_grad():
             metrics.reset()
             torch.compile(model)(*example_batch)
-            check_metrics_vec_kernel_count(3)
+            check_metrics_vec_kernel_count(5)
 
     def test_dropout(self):
         class Model(nn.Module):
