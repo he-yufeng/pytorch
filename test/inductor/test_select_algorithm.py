@@ -293,8 +293,8 @@ class TestSelectAlgorithm(TestCase):
             self.assertEqual(counters["inductor"]["select_algorithm_autotune"], 1)
 
     @pytest.mark.xfail(
-        condition=not torch.version.hip,
-        reason="C++ wrapper dynamic shapes fails on CUDA, fixed on ROCm",
+        condition=torch.version.cuda,
+        reason="C++ wrapper dynamic shapes fails on CUDA",
     )
     @patches
     def test_mm_plus_mm3(self):
