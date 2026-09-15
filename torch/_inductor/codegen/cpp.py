@@ -3461,8 +3461,10 @@ class CppVecKernel(CppKernel):
                 ):
                     next_value = f"!{acc_vec}.all_zero()"
                 else:
-                    if reduction_type != "min":
-                        raise AssertionError('expected reduction_type == "min"')
+                    if reduction_type not in ("min", "prod"):
+                        raise AssertionError(
+                            'expected reduction_type in ("min", "prod")'
+                        )
                     next_value = f"{acc_vec}.all_masked()"
             else:
                 reduce_all_body = (
@@ -3612,8 +3614,10 @@ class CppVecKernel(CppKernel):
         scalar_init = reduction_init(reduction_type, dtype)
         vec_init = f"{vec_type}({scalar_init})"
         if dtype == torch.bool:
-            if reduction_type not in ("min", "max", "sum"):
-                raise AssertionError('expected reduction_type in ("min", "max", "sum")')
+            if reduction_type not in ("min", "max", "sum", "prod"):
+                raise AssertionError(
+                    'expected reduction_type in ("min", "max", "sum", "prod")'
+                )
             return f"{self._get_mask_type()}::from({scalar_init})"
         return vec_init
 
@@ -3632,9 +3636,9 @@ class CppVecKernel(CppKernel):
             n_src = self._get_num_vectors(scalar_type)
             return f"IndexValueVec<{DTYPE_TO_CPP[scalar_type]}, {n_src}, {n_idx}>"
         if dtype == torch.bool:
-            if reduction_type not in ("min", "max", "any", "sum"):
+            if reduction_type not in ("min", "max", "any", "sum", "prod"):
                 raise AssertionError(
-                    'expected reduction_type in ("min", "max", "any", "sum")'
+                    'expected reduction_type in ("min", "max", "any", "sum", "prod")'
                 )
             return f"{self._get_mask_type()}"
         return vec_type
@@ -3677,11 +3681,25 @@ class CppVecKernel(CppKernel):
                     return f"cascade_sum_combine({next_value}, &{helper_val})"
             else:
                 if self.tail_size:
+                    if is_bool:
+                        # a bool sum is any(): a half input lands as
+                        # VecMask<Half> next to the VecMask<float> accumulator,
+                        # so cast the value's mask to the accumulator's base
+                        # before OR-ing over the tail
+                        next_value = f"({next_value}).template cast<{DTYPE_TO_CPP[torch.float]},{self._get_num_vectors(torch.float)}>()"
+                        return f"any_masked_reduce({var}, {next_value}, {cexpr_index(self.tail_size)})"
                     return f"sum_masked_reduce({var}, {next_value}, {cexpr_index(self.tail_size)})"
                 else:
                     conjunction = "|" if is_bool else "+"
                     return f"{var} {conjunction} {next_value}"
         elif reduction_type == "prod":
+            if is_bool:
+                # a bool prod is all(): cast the value's mask to the
+                # accumulator's base, then combine with & (the boolean min shape)
+                next_value = f"({next_value}).template cast<{DTYPE_TO_CPP[torch.float]},{self._get_num_vectors(torch.float)}>()"
+                if self.tail_size:
+                    return f"min_masked_reduce({var}, {next_value}, {cexpr_index(self.tail_size)})"
+                return f"{var} & {next_value}"
             if self.tail_size:
                 return f"prod_masked_reduce({var}, {next_value}, {cexpr_index(self.tail_size)})"
             else:

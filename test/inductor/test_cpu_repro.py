@@ -7715,6 +7715,29 @@ class CPUReproTests(TestCase):
         )
         self.assertTrue(cuda_storage.has_exceeded_max_reads())
 
+    def test_sum_full_reduction_to_bool(self):
+        # #197106: a full reduction of a half input into a bool accumulator
+        # used to die on a mask base-type mismatch in the tail combine
+        def fn(x):
+            return torch.sum(x, dtype=torch.bool)
+
+        self.common(fn, (torch.ones(3, 4).half(),))
+        self.common(fn, (torch.zeros(3, 4).half(),))
+        # fp32 took a different, already-working path; keep it pinned
+        self.common(fn, (torch.ones(3, 4),))
+
+    def test_prod_full_reduction_to_bool(self):
+        # #197106: prod into bool is all(), but the accumulator type whitelist
+        # only knew min/max/any/sum for bool and asserted instead
+        def fn(x):
+            return torch.prod(x, dtype=torch.bool)
+
+        self.common(fn, (torch.ones(3, 4),))
+        self.common(fn, (torch.zeros(3, 4),))
+        mixed = torch.ones(3, 4)
+        mixed[0, 0] = 0
+        self.common(fn, (mixed,))
+
 
 if __name__ == "__main__":
     from torch._inductor.test_case import run_tests
