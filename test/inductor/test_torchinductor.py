@@ -15735,6 +15735,18 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
 
         self.common(fn, (torch.randn(8, 8),))
 
+    @xfail_if_triton_cpu
+    def test_erf_small_arguments_keep_relative_accuracy(self):
+        # #198183: the x86 vectorized erf evaluated 1 - p(t)*exp(-x^2), whose
+        # absolute error bound wiped out every relative digit below ~1e-5.
+        def fn(x):
+            return torch.erf(x)
+
+        x = torch.tensor(
+            [1e-8, 1e-7, 2e-7, 5e-7, 1e-6, 1e-5, 1e-4, 1e-3], dtype=torch.float32
+        )
+        self.common(fn, (x,), rtol=1e-5, atol=1e-8)
+
     @skip_if_halide  # erfinv not implemented
     @xfail_if_triton_cpu
     def test_erfinv(self):
