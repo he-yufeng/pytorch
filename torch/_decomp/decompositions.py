@@ -6078,10 +6078,32 @@ def isin_sorting(elements, test_elements, *, assume_unique=False, invert=False):
 
         return mask[0 : elements.numel()].reshape(elements.shape)
     else:
+        # NaN never matches anything (eager agrees: isin([nan], [nan]) is
+        # False), but torch.sort parks NaN at the end of the test set and IEEE
+        # compares against it are unordered, so searchsorted can place even a
+        # present value (e.g. +inf) past the NaN tail; the clamped equality
+        # then reads a wrong slot and reports False (#198484). Re-point the
+        # NaN slots at +inf: the sorted order stays non-decreasing and every
+        # needle's binary search is sound. A +inf needle then lands on the
+        # first +inf slot, which is a real +inf iff the test set has one
+        # (sort puts every real +inf before the NaN tail), so check the slot's
+        # provenance instead of its value for those needles.
+        if test_elements_flat.numel() == 0:
+            out = torch.zeros_like(elements_flat, dtype=torch.bool)
+            out = out.logical_not() if invert else out
+            return out.reshape(elements.shape)
         sorted_test_elements, _ = torch.sort(test_elements_flat)
+        if sorted_test_elements.dtype.is_floating_point or sorted_test_elements.dtype.is_complex:
+            sorted_is_real_inf = sorted_test_elements == float("inf")
+            sorted_test_elements = torch.where(
+                torch.isnan(sorted_test_elements), float("inf"), sorted_test_elements
+            )
         idx = torch.searchsorted(sorted_test_elements, elements_flat)
         test_idx = torch.where(idx < sorted_test_elements.numel(), idx, 0)
         cmp = sorted_test_elements[test_idx] == elements_flat
+        if sorted_test_elements.dtype.is_floating_point or sorted_test_elements.dtype.is_complex:
+            pos_inf_needle = elements_flat == float("inf")
+            cmp = torch.where(pos_inf_needle, sorted_is_real_inf[test_idx], cmp)
         cmp = cmp.logical_not() if invert else cmp
         return cmp.reshape(elements.shape)
 

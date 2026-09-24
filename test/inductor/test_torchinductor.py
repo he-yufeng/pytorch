@@ -17629,6 +17629,27 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
         test_elements = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])
         self.common(torch.isin, (elements, test_elements), {"assume_unique": True})
 
+    def test_isin_nan_inf_searchsorted(self):
+        # Reproducer for https://github.com/pytorch/pytorch/issues/198484
+        # torch.sort parks NaN at the end of the test set, and IEEE compares
+        # against NaN are unordered, so the searchsorted in the isin
+        # decomposition could place a present +inf past the NaN tail and the
+        # clamped equality then missed it.
+        inf, nan = float("inf"), float("nan")
+        test_elements = torch.tensor(
+            [0.0, 1.0, -1.0, inf, -inf, nan, 1e-38, 3.4e38, 0.5, -0.5, 0.0, 1.0],
+            device=self.device,
+        )
+        for elements in (
+            torch.tensor([inf], device=self.device),
+            torch.tensor(
+                [inf, -inf, nan, 1.0, 0.0, 3.4e38, 1e-38, 42.0],
+                device=self.device,
+            ),
+        ):
+            for invert in (False, True):
+                self.common(torch.isin, (elements, test_elements), {"invert": invert})
+
     def test_mul_index_expr(self):
         # Minified repro from https://github.com/pytorch/pytorch/issues/111884
         def forward():
