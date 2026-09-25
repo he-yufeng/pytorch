@@ -1186,10 +1186,14 @@ template <>
 Vectorized<int64_t> inline operator*(
     const Vectorized<int64_t>& a,
     const Vectorized<int64_t>& b) {
-  return emulate(
-      a, b, [](int64_t a_point, int64_t b_point) __ubsan_ignore_undefined__ {
-        return a_point * b_point;
-      });
+  return emulate(a, b, [](int64_t a_point, int64_t b_point) {
+    // Signed overflow is UB in C++, and an inlined lane multiply lets gcc
+    // assume x*x >= 0 and rewrite a neighboring division to unsigned
+    // (#198606). Wrap in uint64_t instead: the low 64 bits are identical to
+    // a signed multiply, and unsigned wraparound is well-defined.
+    return static_cast<int64_t>(static_cast<uint64_t>(a_point) *
+                                static_cast<uint64_t>(b_point));
+  });
 }
 
 template <>

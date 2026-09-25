@@ -1753,6 +1753,21 @@ class CPUReproTests(TestCase):
             actual = torch.compile(fn_computed_values, fullgraph=True)(x, index)
         self.assertEqual(actual, expected)
 
+    def test_int64_mul_overflow_next_to_division(self):
+        # https://github.com/pytorch/pytorch/issues/198606
+        # A signed int64 lane multiply is UB in C++; inlined next to the
+        # division it let gcc assume x*x >= 0 and divide unsigned, so the
+        # compiled remainder and floor division came out wrong on AVX2.
+        def fn(x):
+            return (x * x) % 72, (x * x) // 72
+
+        x = torch.full((8,), 2**62 + 1, dtype=torch.int64)
+        with torch.no_grad():
+            mod_e, div_e = fn(x)
+            mod_c, div_c = torch.compile(fn)(x)
+            self.assertEqual(mod_e, mod_c)
+            self.assertEqual(div_e, div_c)
+
     def test_index_add(self):
         # https://github.com/pytorch/pytorch/issues/138908
         def fn(x, y, scale_y, index):
