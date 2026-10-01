@@ -1366,6 +1366,16 @@ class TestSortAndSelectDevice(TestCase):
                     c = torch.isin(a, b, assume_unique=assume_unique)
                     self.assertEqual(c, ec)
 
+    def test_isin_noncontiguous_test_elements(self, device):
+        # https://github.com/pytorch/pytorch/issues/199211
+        # The brute-force path used to flatten with view(-1), which throws
+        # for multi-dim test_elements that have no flat view.
+        elements = torch.tensor([0.0, 5.0, 9.0], device=device)
+        test_elements = torch.arange(4.0, device=device).reshape(2, 2).t()
+        expected = torch.tensor([True, False, False], device=device)
+        self.assertEqual(torch.isin(elements, test_elements), expected)
+        self.assertEqual(torch.isin(elements, test_elements, invert=True), ~expected)
+
     @onlyAccelerator
     @dtypes(*all_types())
     def test_isin_different_devices(self, device, dtype):
