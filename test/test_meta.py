@@ -1573,6 +1573,40 @@ class TestMeta(_TestMetaBase):
             self.assertEqual(ref_out[1].size(), meta_out[1].size())
             self.assertEqual(ref_out[1].stride(), meta_out[1].stride())
 
+    def test_meta__fused_moving_avg_obs_fq_helper_per_channel_resize(self, device):
+        # The real kernels resize fresh per-channel observer state to the
+        # channel count on first use; the meta registration must model the
+        # same resize so functionalization sees the final shapes.
+        to_meta = MetaConverter()
+
+        x = torch.randn(8, 4, device=device)
+
+        def args():
+            return [
+                x,
+                torch.ones(1, dtype=torch.long, device=device),
+                torch.ones(1, dtype=torch.long, device=device),
+                torch.empty(0, device=device),
+                torch.empty(0, device=device),
+                torch.ones(1, device=device),
+                torch.zeros(1, dtype=torch.int32, device=device),
+                0.01,
+                -128,
+                127,
+                0,
+            ]
+
+        real_args = args()
+        meta_args = [
+            to_meta(a) if isinstance(a, torch.Tensor) else a for a in args()
+        ]
+        kwargs = {"per_row_fake_quant": True, "symmetric_quant": True}
+        aten._fused_moving_avg_obs_fq_helper.default(*real_args, **kwargs)
+        aten._fused_moving_avg_obs_fq_helper.default(*meta_args, **kwargs)
+
+        for real_a, meta_a in zip(real_args[3:7], meta_args[3:7]):
+            self.assertEqual(real_a.size(), meta_a.size())
+
     def test_cdist_forward(self, device):
         to_meta = MetaConverter()
         x1 = torch.rand([3, 2], device=device)

@@ -1605,6 +1605,76 @@ def forward(self, primals_1):
     return (sin, primals_1)""",
         )
 
+    def test_input_mutation_resize_(self):
+        # aten._fused_moving_avg_obs_fq_helper lazily resizes fresh per-channel
+        # observer state from empty to the channel count. Applying the input
+        # mutation must model the size change, not just copy_() the data.
+        def f(x, running_min, running_max, scale, zero_point):
+            return torch.ops.aten._fused_moving_avg_obs_fq_helper(
+                x,
+                torch.ones(1, dtype=torch.long),
+                torch.ones(1, dtype=torch.long),
+                running_min,
+                running_max,
+                scale,
+                zero_point,
+                0.01,
+                -128,
+                127,
+                0,
+                True,
+                True,
+            )[0]
+
+        def make_inp():
+            return [
+                torch.randn(8, 4),
+                torch.empty(0),
+                torch.empty(0),
+                torch.ones(1),
+                torch.zeros(1, dtype=torch.int32),
+            ]
+
+        inp0 = make_inp()
+        ref_inp = [t.clone() for t in inp0]
+        ref = f(*ref_inp)
+
+        fw_graph_cell = [None]
+        compiled_f = aot_function(
+            f,
+            fw_compiler=make_boxed_compiler(
+                partial(extract_graph, graph_cell=fw_graph_cell)
+            ),
+            bw_compiler=nop,
+            decompositions={},
+            keep_inference_input_mutations=True,
+            dynamic=False,
+        )
+        inp = [t.clone() for t in inp0]
+        out = compiled_f(*inp)
+        self.assertEqual(out, ref)
+        for mutated, eager in zip(inp, ref_inp):
+            self.assertEqual(mutated, eager)
+        # Each resized observer-state input gets a resize_() before its copy_()
+        code = fw_graph_cell[0].code
+        self.assertEqual(code.count("aten.resize_.default"), 4)
+        self.assertEqual(code.count("aten.copy_.default"), 4)
+
+        # Same, with the mutations applied by the runtime epilogue instead
+        inp = [t.clone() for t in inp0]
+        compiled_f = aot_function(
+            f,
+            fw_compiler=nop,
+            bw_compiler=nop,
+            decompositions={},
+            keep_inference_input_mutations=False,
+            dynamic=False,
+        )
+        out = compiled_f(*inp)
+        self.assertEqual(out, ref)
+        for mutated, eager in zip(inp, ref_inp):
+            self.assertEqual(mutated, eager)
+
     #     def test_input_mutation_storage_resize_up_down(self):
     #         def f(a):
     #             torch.ops.inductor.resize_storage_bytes_(a, 32)

@@ -2651,6 +2651,15 @@ def meta__fused_moving_avg_obs_fq_helper(
         ch_axis < self.dim(),
         lambda: "Error in fused_moving_avg_obs_fake_quant_cpu: ch_axis must be < self.dim()",
     )
+    # The real kernels resize fresh per-channel observer state to the channel
+    # count on first use; model that here so functionalization returns the
+    # resized metadata instead of the stale input shapes.
+    if per_row_fake_quant and running_min.numel() == 0:
+        size = self.size(ch_axis)
+        running_min.resize_(size)
+        running_max.resize_(size)
+        scale.resize_(size)
+        zero_point.resize_(size)
     mask = torch.empty_like(self, dtype=torch.bool)
     return (torch.empty_like(self), mask)
 

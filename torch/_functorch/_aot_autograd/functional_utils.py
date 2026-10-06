@@ -603,6 +603,10 @@ def _is_functional_graph(fx_g: torch.fx.Graph) -> tuple[str | None, int]:
         torch.ops.aten.copy_.default,
         torch.ops.aten.set_.source_Tensor,
         torch.ops.aten.shallow_copy_data_.default,
+        # Inputs that the op resized (e.g. lazily sized observer buffers that
+        # start empty) get a resize_() before their copy_(); both must target
+        # placeholders.
+        torch.ops.aten.resize_.default,
     ]
     if hasattr(torch.ops.fsdp, "copy_"):
         allowed_mutation_ops.append(torch.ops.fsdp.copy_.default)
@@ -622,7 +626,15 @@ def _is_functional_graph(fx_g: torch.fx.Graph) -> tuple[str | None, int]:
                 # this is mostly a hack to avoid failing XLA tests.
                 # See https://github.com/pytorch/pytorch/pull/122434#issuecomment-2101012113
                 if "set_buffer_donor_" not in str(n.args[0]):
-                    if n.args[0] not in placeholders:
+                    mutation_target = n.args[0]
+                    # a copy_() may write into a resize_() of a placeholder
+                    if (
+                        n.target is torch.ops.aten.copy_.default
+                        and mutation_target.op == "call_function"
+                        and mutation_target.target is torch.ops.aten.resize_.default
+                    ):
+                        mutation_target = mutation_target.args[0]
+                    if mutation_target not in placeholders:
                         error = f"n={str(n)}, n.args[0]={str(n.args[0])}, placeholders={str(placeholders)}, graph={str(fx_g)}"
                 mutation_count += 1
             else:
@@ -647,11 +659,18 @@ def propagate_input_mutation_stacktraces(fx_g: torch.fx.Graph) -> None:
             if n.target is torch.ops.aten.copy_.default:
                 # Can only copy_ into an input, and can only do so once
                 if "set_buffer_donor_" not in str(n.args[0]):
-                    if n.args[0] not in placeholders:
+                    mutation_target = n.args[0]
+                    # a copy_() may write into a resize_() of a placeholder
+                    if (
+                        mutation_target.op == "call_function"
+                        and mutation_target.target is torch.ops.aten.resize_.default
+                    ):
+                        mutation_target = mutation_target.args[0]
+                    if mutation_target not in placeholders:
                         raise AssertionError(
                             f"n={str(n)}, n.args[0]={str(n.args[0])}, placeholders={str(placeholders)}, graph={str(fx_g)}"
                         )
-                    placeholders.remove(n.args[0])
+                    placeholders.remove(mutation_target)
                 copy_from_node = n.args[1]
                 # Pre-condition: every node has a "stack_trace" field in its meta,
                 # but copy_() nodes do not (since we manually added them during functionalization).

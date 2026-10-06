@@ -814,6 +814,11 @@ def apply_in_graph_mutations(
     if mcs is not None and mcs.mc_data <= applied_mcs.mc_data:  # type: ignore[union-attr]
         return
 
+    # The op may also have resized its input (e.g. lazily sized observer
+    # buffers that start empty); put the resize in the graph as well so the
+    # copy_() below sees matching shapes.
+    needs_resize = inpt_old.shape != inpt_new.shape
+
     if input_info.mutations_hidden_from_autograd:
         # Hidden from autograd = run under no_grad, **and** don't bump VC
         # (although if the tensor was created in inference mode, it has no VC)
@@ -824,6 +829,8 @@ def apply_in_graph_mutations(
                 inpt_old  # type: ignore[assignment]
             )
         with torch.no_grad(), maybe_preserve_vc:
+            if needs_resize:
+                inpt_old.resize_(inpt_new.shape)
             inpt_old.copy_(inpt_new)
     elif input_info.mutations_under_no_grad_or_inference_mode:
         # Under no_grad = run under no_grad (we still bump the VC though)
@@ -831,8 +838,12 @@ def apply_in_graph_mutations(
         # was created outside of inference_mode)
 
         with torch.no_grad():
+            if needs_resize:
+                inpt_old.resize_(inpt_new.shape)
             inpt_old.copy_(inpt_new)
     else:
+        if needs_resize:
+            inpt_old.resize_(inpt_new.shape)
         inpt_old.copy_(inpt_new)
 
 

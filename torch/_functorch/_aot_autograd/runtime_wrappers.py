@@ -776,6 +776,11 @@ class _RuntimeForwardEpilogue:
                 else:
                     if not meta.mutates_data:
                         raise AssertionError("expected meta.mutates_data to be True")
+                # The op may have resized its input (e.g. lazily sized observer
+                # buffers that start empty); resize before the copy_() so the
+                # shapes match.
+                if original_inpt.shape != updated_inpt.shape:
+                    original_inpt.resize_(updated_inpt.shape)
                 if meta.is_leaf and original_inpt.requires_grad:
                     # We can hit this situation in this case:
                     #   def f(x):
@@ -1127,6 +1132,12 @@ def _create_runtime_wrapper(
                             raise AssertionError(
                                 f"expected mutates_data for input {inpt_idx}"
                             )
+                    # The op may have resized its input (e.g. lazily sized
+                    # observer buffers that start empty); resize before the
+                    # copy_() so the shapes match.
+                    buf.writeline(
+                        f"if {oi}.shape != {ui}.shape: {oi}.resize_({ui}.shape)"
+                    )
                     if meta.is_leaf:
                         buf.writeline(
                             f"if {oi}.requires_grad: {oi}.detach().copy_({ui})"
