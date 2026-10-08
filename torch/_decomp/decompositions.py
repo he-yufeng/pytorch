@@ -4894,6 +4894,26 @@ def nll_loss2d_forward(
     reduction: int,
     ignore_index: int,
 ) -> tuple[Tensor, Tensor]:
+    if self.dim() != 4:
+        raise AssertionError(
+            f"only batches of spatial inputs supported (4D tensors), but got input of dimension: {self.dim()}"
+        )
+    if target.dim() != 3:
+        raise AssertionError(
+            f"only batches of spatial targets supported (3D tensors) but got targets of dimension: {target.dim()}"
+        )
+    torch._check(
+        self.shape[0] == target.shape[0],
+        lambda: f"size mismatch (got input: {self.shape}, target: {target.shape})",
+    )
+    torch._check(
+        self.shape[2] == target.shape[1],
+        lambda: f"size mismatch (got input: {self.shape}, target: {target.shape})",
+    )
+    torch._check(
+        self.shape[3] == target.shape[2],
+        lambda: f"size mismatch (got input: {self.shape}, target: {target.shape})",
+    )
     return _nll_loss_forward(self, target, weight, reduction, ignore_index)
 
 
