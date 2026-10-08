@@ -11466,6 +11466,28 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
                 (a, b),
             )
 
+    def test_nll_loss2d_forward_validates_target_shape(self):
+        # The nll_loss2d decomposition used to skip the kernel's shape checks
+        # and gather straight from a mismatched target, silently returning a
+        # meaningless loss where eager raises (#200244).
+        def fn(a, b):
+            return torch.nn.functional.nll_loss(a, b)
+
+        inp = torch.randn(2, 3, 8, 8, device=self.device)
+        tgt = torch.randint(0, 3, (2, 8, 7), device=self.device)
+        with self.assertRaises(RuntimeError):
+            fn(inp, tgt)
+        with self.assertRaises(RuntimeError):
+            torch.compile(fn)(inp, tgt)
+
+        # batch mismatch through the raw aten op, which bypasses the
+        # nll_loss_nd dispatch and its own batch check
+        bad_batch = torch.randint(0, 3, (3, 8, 8), device=self.device)
+        with self.assertRaises(RuntimeError):
+            torch.compile(lambda a, b: aten.nll_loss2d_forward(a, b, None, 1, -100)[0])(
+                inp, bad_batch
+            )
+
     @xfail_if_mps  # dtypes mismatch
     def test_nll_loss_backward(self):
         def fn(a, b, c):
