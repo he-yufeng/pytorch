@@ -3677,6 +3677,30 @@ class CPUReproTests(TestCase):
                     torch.allclose(output_eager, output_compiled, atol=1e-4, rtol=1e-4)
                 )
 
+    def test_var_welford_large_magnitude(self):
+        # https://github.com/pytorch/pytorch/issues/200229
+        # The pairwise welford_combine squared delta before applying the lane
+        # weights, so a zero-weight masked-tail lane (mean 0, delta = full
+        # magnitude) computed inf * 0 = NaN once values passed ~1e154.
+        # These stay on shapes where the eager reference is stable; the eager
+        # full-reduce two-pass kernel has its own overflow at this magnitude
+        # for some sizes.
+        def fn(x):
+            return torch.var(x), torch.std(x)
+
+        def fn_rows(x):
+            return torch.var(x, dim=-1), torch.std(x, dim=-1)
+
+        x = torch.full((5,), 1e200, dtype=torch.float64)
+        self.assertEqual(fn(x), torch.compile(fn)(x))
+        for x in [
+            torch.full((3, 2), 1e200, dtype=torch.float64),
+            torch.tensor(
+                [[1e160, 1e160 + 1e145], [1e200, 1e200]], dtype=torch.float64
+            ),
+        ]:
+            self.assertEqual(fn_rows(x), torch.compile(fn_rows)(x))
+
     @unittest.skipIf(IS_FBCODE, "Not yet runnable in fbcode")
     @requires_vectorization
     @patch("torch.cuda.is_available", lambda: False)

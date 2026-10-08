@@ -241,7 +241,12 @@ Welford<T> welford_combine(
   }
   auto result = Welford<T>{
       a.mean + delta * wb_over_w,
-      a.m2 + b.m2 + delta * delta * a_weight * wb_over_w,
+      // Reassociate so delta is not squared first: with a zero-weight side
+      // the correction is exactly 0, but delta * delta can overflow to inf
+      // before the zero weight is applied (a masked tail lane's mean is 0,
+      // so delta carries the full magnitude), and inf * 0 = NaN. Exact for
+      // every finite input.
+      a.m2 + b.m2 + delta * (delta * a_weight * wb_over_w),
       new_weight,
       new_index};
   return result;
