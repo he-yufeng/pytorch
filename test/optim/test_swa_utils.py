@@ -6,6 +6,7 @@ import pickle
 import torch
 from torch.optim.swa_utils import (
     AveragedModel,
+    get_ema_avg_fn,
     get_ema_multi_avg_fn,
     get_swa_multi_avg_fn,
     update_bn,
@@ -55,6 +56,18 @@ class SWATestCNN(torch.nn.Module):
 
 class TestSWAUtilsGeneric(TestCase):
     hw_classification = HardwareClassification.GENERIC
+
+    def test_ema_avg_fn_rejects_nan_decay(self):
+        # NaN decay must not slip past the [0, 1] check: an ordered comparison
+        # against NaN is always False, so the factories accepted it and every
+        # averaged parameter silently turned NaN on update (#201308).
+        for factory in (get_ema_avg_fn, get_ema_multi_avg_fn):
+            with self.assertRaisesRegex(ValueError, "Invalid decay value"):
+                factory(decay=float("nan"))
+        # The valid boundary values keep working.
+        for factory in (get_ema_avg_fn, get_ema_multi_avg_fn):
+            factory(decay=0.0)
+            factory(decay=1.0)
 
     def test_averaged_model_state_dict(self):
         dnn = torch.nn.Sequential(
