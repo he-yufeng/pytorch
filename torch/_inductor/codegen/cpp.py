@@ -401,6 +401,45 @@ def replace_cascade_sum_with_add(buffer: IndentedBuffer):
                 buffer._lines[i] = new_content
 
 
+def replace_cascade_welford_with_combine(buffer: IndentedBuffer):
+    """
+    Replaces `acc = welford_combine(acc, value, &helper)` with
+    `acc = welford_combine(acc, value);`
+
+    The helper argument cashes a completed 4096-element chunk out of the
+    accumulator into the cascade stack (see the WelfordHelper overload in
+    cpp_prefix.h), and the stack is later folded by a separate combine call.
+    In the scalar tail path of a tiled reduction the accumulators are the
+    per-lane tmp_acc_arr[] entries that the tail store reads, so a cashed-out
+    chunk must stay in the lane accumulator: the fold call targets the plain
+    scalar accumulator, which nothing reads afterwards.
+    """
+
+    pattern = r"welford_combine\(([^,]+),\s*([^,]+),\s*&[^)]+\)"
+    for i, line in enumerate(buffer._lines):
+        if not (
+            isinstance(
+                line,
+                (
+                    str,
+                    DeferredLine,
+                ),
+            )
+        ):
+            raise AssertionError("expected isinstance( line, ( str, DeferredLine, ), )")
+        content = line.line if isinstance(line, DeferredLine) else line
+        match = re.search(pattern, content)
+        if match:
+            acc, value = match.groups()
+            new_content = re.sub(
+                pattern, f"welford_combine({acc}, {value})", content
+            )
+            if isinstance(line, DeferredLine):
+                line.line = new_content
+            else:
+                buffer._lines[i] = new_content
+
+
 @dataclasses.dataclass
 class ParallelDepth:
     """
@@ -5031,6 +5070,11 @@ class CppKernelProxy(CppKernel):
                         # If tail loop kernel is a scalar kernel, use direct sum instead of cascade_sum_combine
                         # as the reduction vars are extended: tmp_acc -> tmp_acc_arr[].
                         replace_cascade_sum_with_add(tail_loop_kernel.stores)
+                        # Welford combines must likewise stay plain: the helper
+                        # form would cash completed chunks out of the per-lane
+                        # accumulators into a stack that is folded into a
+                        # variable nothing reads, losing every full chunk.
+                        replace_cascade_welford_with_combine(tail_loop_kernel.stores)
                         suffix_buf.splice(
                             move_code_under_inner_loop(
                                 tail_loop_kernel.reduction_suffix,

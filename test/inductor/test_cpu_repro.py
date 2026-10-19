@@ -3679,6 +3679,21 @@ class CPUReproTests(TestCase):
                     torch.allclose(output_eager, output_compiled, atol=1e-4, rtol=1e-4)
                 )
 
+    def test_welford_tail_chunk_kept_in_lane_accumulator(self):
+        # https://github.com/pytorch/pytorch/issues/201473
+        # A scalar tail lane whose reduction spans a full cascade chunk lost
+        # every completed chunk: the chunk was cashed out of the per-lane
+        # accumulator into a helper stack folded into a variable nothing reads.
+        def masked_var(x):
+            return torch.where(x > -10.0, x, 0.0).var(dim=0)
+
+        cfn = torch.compile(masked_var)
+        for n in (4096, 4097, 8192):
+            x = torch.randn(n, 17, generator=torch.Generator().manual_seed(n))
+            eager = masked_var(x)
+            compiled = cfn(x)
+            torch.testing.assert_close(compiled, eager, rtol=1e-5, atol=1e-6)
+
     @unittest.skipIf(IS_FBCODE, "Not yet runnable in fbcode")
     @requires_vectorization
     @patch("torch.cuda.is_available", lambda: False)
