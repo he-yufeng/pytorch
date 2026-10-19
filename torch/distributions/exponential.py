@@ -77,7 +77,9 @@ class Exponential(ExponentialFamily):
     def cdf(self, value):
         if self._validate_args:
             self._validate_sample(value)
-        return 1 - torch.exp(-self.rate * value)
+        # -expm1(-rate*x) is exact for small rate*x where 1-exp(-rate*x)
+        # cancels catastrophically.
+        return -torch.expm1(-self.rate * value)
 
     def icdf(self, value):
         return -torch.log1p(-value) / self.rate

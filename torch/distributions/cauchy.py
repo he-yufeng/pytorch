@@ -90,10 +90,21 @@ class Cauchy(Distribution):
     def cdf(self, value):
         if self._validate_args:
             self._validate_sample(value)
-        return torch.atan((value - self.loc) / self.scale) / math.pi + 0.5
+        # atan(z)/pi + 0.5 annihilates the lower tail (z -> -inf rounds to
+        # exactly 0.5), while the atan2 form below is exact there but loses
+        # the upper tail to 1 - eps rounding. Evaluate each on its own side.
+        lower = torch.atan2(self.scale, self.loc - value) / math.pi
+        upper = 1 - torch.atan2(self.scale, value - self.loc) / math.pi
+        return torch.where(value <= self.loc, lower, upper)
 
     def icdf(self, value):
-        return torch.tan(math.pi * (value - 0.5)) * self.scale + self.loc
+        # tan(pi*(q-0.5)) drops the low digits of q in the subtraction, and
+        # float pi puts the q=1 pole at a large finite value. The cotangent
+        # form keeps the tail digits on both sides: q directly below 0.5,
+        # 1-q (exact by Sterbenz) above it.
+        lower = -self.scale / torch.tan(math.pi * value)
+        upper = self.scale / torch.tan(math.pi * (1 - value))
+        return torch.where(value <= 0.5, lower, upper) + self.loc
 
     def entropy(self):
         return math.log(4 * math.pi) + self.scale.log()

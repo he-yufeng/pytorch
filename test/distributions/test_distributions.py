@@ -6655,6 +6655,61 @@ class TestNumericalStability(DistributionsTestCase):
                 expected_gradient=tensor_type([0.0]),
             )
 
+    def test_cdf_icdf_tail_precision(self):
+        # Regression tests for tail cancellation in cdf/icdf formulas: small
+        # probabilities must survive in float64 (issues #186824, #201397).
+        one = torch.tensor(1.0, dtype=torch.float64)
+        zero = torch.tensor(0.0, dtype=torch.float64)
+
+        # Exponential.cdf: 1 - exp(-x) cancels below ~1e-16; -expm1(-x) exact.
+        cdf = Exponential(one).cdf(torch.tensor(1e-20, dtype=torch.float64))
+        self.assertEqual(
+            cdf, torch.tensor(1e-20, dtype=torch.float64), atol=0, rtol=1e-12
+        )
+
+        # Cauchy.cdf lower tail: atan(z)/pi + 0.5 rounds to 0; the atan2 form
+        # is exact there, and the piecewise form keeps the upper tail too.
+        cauchy = Cauchy(zero, one)
+        tail = 3.183098861837907e-16  # 1/(pi*1e15)
+        cdf_lo = cauchy.cdf(torch.tensor(-1e15, dtype=torch.float64))
+        self.assertEqual(
+            cdf_lo, torch.tensor(tail, dtype=torch.float64), atol=0, rtol=1e-12
+        )
+        cdf_hi = cauchy.cdf(torch.tensor(1e15, dtype=torch.float64))
+        self.assertEqual(
+            cdf_hi, torch.tensor(1 - tail, dtype=torch.float64), atol=0, rtol=1e-12
+        )
+
+        # Cauchy.icdf: tan(pi*(q-0.5)) drops the digits of small q; the
+        # unbounded support maps q=0/q=1 to -inf/+inf.
+        self.assertEqual(
+            cauchy.icdf(zero),
+            torch.tensor(-float("inf"), dtype=torch.float64),
+            atol=0,
+            rtol=0,
+        )
+        self.assertEqual(
+            cauchy.icdf(one),
+            torch.tensor(float("inf"), dtype=torch.float64),
+            atol=0,
+            rtol=0,
+        )
+        icdf = cauchy.icdf(torch.tensor(1e-15, dtype=torch.float64))
+        self.assertEqual(
+            icdf,
+            torch.tensor(-3.183098861837907e14, dtype=torch.float64),
+            atol=0,
+            rtol=1e-12,
+        )
+
+        # A transform chain with a tensor sign must pass a +1 sign through
+        # unchanged; the affine rewrite (v - 0.5) + 0.5 rounds tiny values to 0.
+        d = TransformedDistribution(Exponential(one), AffineTransform(zero, 2 * one))
+        cdf = d.cdf(torch.tensor(1e-20, dtype=torch.float64))
+        self.assertEqual(
+            cdf, torch.tensor(5e-21, dtype=torch.float64), atol=0, rtol=1e-12
+        )
+
 
 # TODO: make this a pytest parameterized test
 class TestLazyLogitsInitialization(DistributionsTestCase):

@@ -199,6 +199,10 @@ class TransformedDistribution(Distribution):
             sign = sign * transform.sign
         if isinstance(sign, int) and sign == 1:
             return value
+        if torch.is_tensor(sign):
+            # Entries with sign +1 must pass through unchanged: the affine
+            # rewrite (value - 0.5) + 0.5 rounds small probabilities to 0.
+            return torch.where(sign == 1, value, sign * (value - 0.5) + 0.5)
         return sign * (value - 0.5) + 0.5
 
     def cdf(self, value):
